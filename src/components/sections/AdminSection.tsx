@@ -1,31 +1,102 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, Button, Badge, Select } from '../UIComponents';
-import { UserRole } from '../../types';
+import { UserRole, Session } from '../../types';
 import { FcDisplay, FcPhoneAndroid, FcExport, FcDownload, FcHighPriority, FcDatabase } from 'react-icons/fc';
 import { Trash2 } from 'lucide-react';
+import { supabase } from '../../lib/supabaseClient';
+function formatLastActive(timestamp: string) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / 60000);
+  if (diffInMinutes < 1) return 'Just now';
+  if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  if (diffInHours < 24) return `${diffInHours}h ago`;
+  const diffInDays = Math.floor(diffInHours / 24);
+  return `${diffInDays}d ago`;
+}
 
 interface Props {
   userRole: UserRole;
 }
 
 const AdminSection: React.FC<Props> = ({ userRole }) => {
-  const [sessions, setSessions] = useState([
-    { id: '1', device: 'MacBook Pro', browser: 'Chrome', ip: '192.168.1.123', location: 'San Francisco, US', lastActive: 'Now', isCurrent: true, type: 'desktop' },
-    { id: '2', device: 'iPhone 13', browser: 'Safari', ip: '10.0.0.52', location: 'San Francisco, US', lastActive: '2 hrs ago', isCurrent: false, type: 'mobile' },
-    { id: '3', device: 'Windows PC', browser: 'Edge', ip: '172.16.0.4', location: 'New York, US', lastActive: '2 days ago', isCurrent: false, type: 'desktop' },
-  ]);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [retentionPeriod, setRetentionPeriod] = useState('1_year');
+  const fetchSessions = async () => {
+    try {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-  const handleLogout = (id: string) => {
-    if (confirm("Are you sure? The user/device will be logged out.")) {
-      setSessions(sessions.filter(s => s.id !== id));
+      const { data, error } = await supabase
+        .from('active_sessions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('last_active', { ascending: false });
+
+      if (error) throw error;
+      if (data) {
+        setSessions(data.map((s: any) => ({
+          id: s.id,
+          device: s.device,
+          browser: s.browser,
+          ip: s.ip_address,
+          location: s.location,
+          lastActive: formatLastActive(s.last_active),
+          isCurrent: s.is_current,
+          type: s.device.toLowerCase().includes('iphone') || s.device.toLowerCase().includes('android') ? 'mobile' : 'desktop'
+        })));
+      }
+    } catch (err) {
+      console.error('Error fetching sessions:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleLogoutAll = () => {
+  useEffect(() => {
+    fetchSessions();
+  }, []);
+
+  const [retentionPeriod, setRetentionPeriod] = useState('1_year');
+
+  const handleLogout = async (id: string) => {
+    if (confirm("Are you sure? The user/device will be logged out.")) {
+      try {
+        const { error } = await supabase
+          .from('active_sessions')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+        setSessions(sessions.filter(s => s.id !== id));
+      } catch (err) {
+        console.error('Error revoking session:', err);
+        alert('Failed to revoke session');
+      }
+    }
+  };
+
+  const handleLogoutAll = async () => {
     if (confirm("Are you sure you want to log out from all devices? This will terminate all active sessions except your current one.")) {
-      setSessions(sessions.filter(s => s.isCurrent));
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { error } = await supabase
+          .from('active_sessions')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('is_current', false);
+
+        if (error) throw error;
+        setSessions(sessions.filter(s => s.isCurrent));
+      } catch (err) {
+        console.error('Error revoking all sessions:', err);
+        alert('Failed to revoke all sessions');
+      }
     }
   };
 
@@ -43,30 +114,36 @@ const AdminSection: React.FC<Props> = ({ userRole }) => {
           )}
         </div>
         <div className="space-y-4 mt-4">
-          {sessions.map(session => (
-            <div key={session.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-100">
-              <div className="flex items-center space-x-4">
-                {session.type === 'desktop' ? <FcDisplay size={24} /> : <FcPhoneAndroid size={24} />}
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-medium text-gray-900">{session.device}</span>
-                    {session.isCurrent && <Badge variant="success">Current Session</Badge>}
+          {loading ? (
+            <div className="text-center py-8 text-gray-500">Loading sessions...</div>
+          ) : sessions.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No active sessions found</div>
+          ) : (
+            sessions.map(session => (
+              <div key={session.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-100">
+                <div className="flex items-center space-x-4">
+                  {session.type === 'desktop' ? <FcDisplay size={24} /> : <FcPhoneAndroid size={24} />}
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium text-gray-900">{session.device}</span>
+                      {session.isCurrent && <Badge variant="success">Current Session</Badge>}
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {session.browser} • {session.location} • {session.ip}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1">Last active: {session.lastActive}</div>
                   </div>
-                  <div className="text-sm text-gray-500">
-                    {session.browser} • {session.location} • {session.ip}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1">Last active: {session.lastActive}</div>
                 </div>
-              </div>
 
-              {/* Logout Logic */}
-              {!session.isCurrent && canManageSessions && (
-                <Button variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => handleLogout(session.id)}>
-                  <span className="mr-2 flex items-center"><FcExport size={16} /></span> Logout
-                </Button>
-              )}
-            </div>
-          ))}
+                {/* Logout Logic */}
+                {!session.isCurrent && canManageSessions && (
+                  <Button variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => handleLogout(session.id)}>
+                    <span className="mr-2 flex items-center"><FcExport size={16} /></span> Logout
+                  </Button>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </Card>
 

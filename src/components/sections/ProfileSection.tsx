@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { supabase } from '../../lib/supabaseClient';
 import { Card, Button, Input, Select, TextArea, Badge } from '../UIComponents';
 import { UserProfile, CompanyProfile, UserRole } from '../../types';
 import { FcCamera, FcUpload, FcCancel, FcPlus } from 'react-icons/fc';
@@ -474,9 +473,6 @@ interface Props {
 }
 
 const ProfileSection: React.FC<Props> = ({ initialData, userRole }) => {
-  //   const SAVED_PROFILE_KEY = 'settings_user_profile';
-  //   const SAVED_COMPANY_KEY = 'settings_company_profile';
-
   // State Initialization
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<UserProfile>({
@@ -496,65 +492,37 @@ const ProfileSection: React.FC<Props> = ({ initialData, userRole }) => {
   const [hasProfile, setHasProfile] = useState(false);
   const { addToast } = useToast();
 
-  // Load from Supabase
+  // Load from localStorage (onboarding data)
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
+    const loadData = () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          // Not logged in? Handle accordingly or just stop loading
-          setLoading(false);
-          return;
-        }
-
-        // 1. Get Personal Profile
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-
-        if (profileError && profileError.code !== 'PGRST116') { // PGRST116 is "Row not found"
-          console.error('Error fetching profile:', profileError);
-        }
-
-        if (profile) {
-          // Map DB keys (first_name, last_name) to frontend (fullName)
-          const dbFullName = profile.full_name || (profile.first_name && profile.last_name ? `${profile.first_name} ${profile.last_name}` : profile.first_name || '');
-
-          setUserProfile({
-            fullName: dbFullName || '',
-            email: profile.email || user.email || '',
-            phone: profile.phone || '',
-            location: profile.location || ''
-          });
-          setHasProfile(true);
-
-          // 2. Get Company Profile (only if user profile exists)
-          const { data: company, error: companyError } = await supabase
-            .from('companies')
-            .select('*')
-            .eq('owner_id', user.id)
-            .single();
-
-          if (company) {
-            setCompanyProfile({
-              name: company.name || '',
-              website: company.website || '',
-              address: company.address || '',
-              intro: company.intro || ''
+        const savedData = localStorage.getItem('leadq_user_data');
+        if (savedData) {
+          const parsedData = JSON.parse(savedData);
+          
+          // Load profile data
+          if (parsedData.profile) {
+            setUserProfile({
+              fullName: parsedData.profile.fullName || '',
+              email: parsedData.profile.email || '',
+              phone: parsedData.profile.phone || '',
+              location: parsedData.profile.location || ''
             });
-          } else if (companyError && companyError.code !== 'PGRST116') {
-            console.error("Error fetching company:", companyError)
+            setHasProfile(true);
           }
-        } else {
-          // Pre-fill email from auth if possible
-          setUserProfile(prev => ({ ...prev, email: user.email || '' }));
-        }
 
+          // Load company data
+          if (parsedData.company) {
+            setCompanyProfile({
+              name: parsedData.company.name || '',
+              website: parsedData.company.website || '',
+              address: parsedData.company.address || '',
+              intro: parsedData.company.intro || ''
+            });
+          }
+        }
       } catch (err) {
-        console.error("Unexpected error loading data", err);
+        console.error("Error loading data from localStorage", err);
       } finally {
         setLoading(false);
       }
@@ -568,27 +536,22 @@ const ProfileSection: React.FC<Props> = ({ initialData, userRole }) => {
     setUserProfile(data);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      // Get existing data from localStorage
+      const savedData = localStorage.getItem('leadq_user_data');
+      const existingData = savedData ? JSON.parse(savedData) : {};
 
-      // Split name for DB
-      const nameParts = data.fullName.trim().split(' ');
-      const firstName = nameParts[0] || '';
-      const lastName = nameParts.slice(1).join(' ') || '';
+      // Update profile data
+      const updatedData = {
+        ...existingData,
+        profile: {
+          fullName: data.fullName,
+          email: data.email,
+          phone: data.phone,
+          location: data.location,
+        },
+      };
 
-      const { error } = await supabase.from('profiles').upsert({
-        id: user.id,
-        // Reverting to full_name as first_name/last_name columns don't exist
-        full_name: data.fullName,
-        // first_name: firstName,
-        // last_name: lastName,
-        email: data.email,
-        phone: data.phone,
-        location: data.location,
-        updated_at: new Date().toISOString()
-      });
-
-      if (error) throw error;
+      localStorage.setItem('leadq_user_data', JSON.stringify(updatedData));
 
       setHasProfile(true);
       addToast("Personal profile updated successfully", "success");
@@ -602,33 +565,26 @@ const ProfileSection: React.FC<Props> = ({ initialData, userRole }) => {
     setCompanyProfile(data);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      // Get existing data from localStorage
+      const savedData = localStorage.getItem('leadq_user_data');
+      const existingData = savedData ? JSON.parse(savedData) : {};
 
-      const { data: existing } = await supabase.from('companies').select('id').eq('owner_id', user.id).single();
-
-      if (existing) {
-        const { error } = await supabase.from('companies').update({
+      // Update company data
+      const updatedData = {
+        ...existingData,
+        company: {
           name: data.name,
           website: data.website,
           address: data.address,
-          intro: data.intro
-        }).eq('id', existing.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('companies').insert({
-          owner_id: user.id,
-          name: data.name,
-          website: data.website,
-          address: data.address,
-          intro: data.intro
-        });
-        if (error) throw error;
-      }
+          intro: data.intro,
+        },
+      };
 
+      localStorage.setItem('leadq_user_data', JSON.stringify(updatedData));
+
+      addToast("Company profile updated successfully", "success");
     } catch (err: any) {
       console.error("Error updating company:", err);
-      // Show the actual error message or a fallback
       addToast(`Failed to save company changes: ${err.message || 'Unknown error'}`, "error");
     }
   };

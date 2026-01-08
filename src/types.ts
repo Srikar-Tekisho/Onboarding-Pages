@@ -37,4 +37,5 @@ export interface Session {
   location: string;
   lastActive: string;
   isCurrent: boolean;
+  type: 'desktop' | 'mobile';
 }

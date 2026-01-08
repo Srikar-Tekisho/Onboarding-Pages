@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
       server: {
-        port: 3000,
+        port: 3001,
         host: '0.0.0.0',
       },
       plugins: [react()],
@@ -20,12 +20,10 @@ export default defineConfig(({ mode }) => {
         }
       },
       build: {
+        outDir: 'dist/onboarding',
         rollupOptions: {
           input: {
-            main: path.resolve(__dirname, 'index.html'),
             onboarding: path.resolve(__dirname, 'onboarding.html'),
-            dashboard: path.resolve(__dirname, 'dashboard.html'),
-            settings: path.resolve(__dirname, 'settings.html'),
           },
         },
       },

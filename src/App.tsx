@@ -3,39 +3,29 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import MainDashboard from './components/MainDashboard';
 import SettingsDashboard from './components/SettingsDashboard';
 import Chatbot from './components/Chatbot';
-import Login from './components/Login';
+import Onboarding from './components/Onboarding';
 import FeedbackPopup from './components/FeedbackPopup';
-import { supabase } from './lib/supabaseClient';
-import { Session } from '@supabase/supabase-js';
+
+const ONBOARDING_COMPLETE_KEY = 'leadq_onboarding_complete';
 
 const App: React.FC = () => {
-  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const hasTriggeredExitIntent = useRef(false);
 
+  // Check if user needs onboarding (using localStorage for non-auth flow)
   useEffect(() => {
-    // Check active session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    // Listen for changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
+    const onboardingComplete = localStorage.getItem(ONBOARDING_COMPLETE_KEY);
+    setNeedsOnboarding(!onboardingComplete);
+    setLoading(false);
   }, []);
 
   // Exit Intent Logic
   useEffect(() => {
     const handleMouseLeave = (e: MouseEvent) => {
       // Trigger if mouse leaves top of viewport and hasn't triggered before
-      if (e.clientY <= 0 && !hasTriggeredExitIntent.current && session) {
+      if (e.clientY <= 0 && !hasTriggeredExitIntent.current && !needsOnboarding) {
         hasTriggeredExitIntent.current = true;
         setShowFeedback(true);
       }
@@ -43,29 +33,44 @@ const App: React.FC = () => {
 
     document.addEventListener('mouseleave', handleMouseLeave);
     return () => document.removeEventListener('mouseleave', handleMouseLeave);
-  }, [session]);
+  }, [needsOnboarding]);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const handleExit = () => {
     setShowFeedback(false);
-    hasTriggeredExitIntent.current = false; // Reset for next login
+    hasTriggeredExitIntent.current = false;
+  };
+
+  const handleOnboardingComplete = () => {
+    localStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
+    setNeedsOnboarding(false);
   };
 
   if (loading) {
-    return <div className="flex h-screen items-center justify-center bg-gray-50 animate-pulse text-gray-400">Loading LeadQ AI...</div>;
+    return (
+      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50">
+        <div className="text-center">
+          <div className="w-16 h-16 mx-auto border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4" />
+          <p className="text-gray-500 animate-pulse">Loading LeadQ AI...</p>
+        </div>
+      </div>
+    );
   }
 
-  if (!session) {
-    return <Login />;
+  if (needsOnboarding) {
+    return (
+      <Onboarding
+        onComplete={handleOnboardingComplete}
+      />
+    );
   }
 
   return (
     <BrowserRouter>
-      {/* Global Feedback Popup - Triggered on Logout OR Exit Intent */}
+      {/* Global Feedback Popup - Triggered on Exit Intent */}
       {showFeedback && (
         <FeedbackPopup
           onClose={() => setShowFeedback(false)}
-          onConfirmExit={handleLogout}
+          onConfirmExit={handleExit}
         />
       )}
 
